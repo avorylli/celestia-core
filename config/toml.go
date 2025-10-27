@@ -567,6 +567,11 @@ enable_legacy_block_prop = {{ .Consensus.EnableLegacyBlockProp }}
 # reindex events in the command-line tool.
 discard_abci_responses = {{ .Storage.DiscardABCIResponses}}
 
+# Set to true to discard TxInfo records to save disk space. TxInfo records are
+# required for /tx_status RPC queries and transaction status tracking.
+# When enabled, transaction status queries will not work for historical transactions.
+discard_tx_info = {{ .Storage.DiscardTxInfo}}
+
 #######################################################
 ###   Transaction Indexer Configuration Options     ###
 #######################################################
