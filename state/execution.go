@@ -56,6 +56,9 @@ type BlockExecutor struct {
 
 	// tracer optional tracer
 	tracer trace.Tracer
+
+	// storage configuration
+	storeOptions StoreOptions
 }
 
 type BlockExecutorOption func(executor *BlockExecutor)
@@ -75,6 +78,12 @@ func BlockExecutorWithRootDir(rootDir string) BlockExecutorOption {
 func BlockExecutorWithTracer(tracer trace.Tracer) BlockExecutorOption {
 	return func(blockExec *BlockExecutor) {
 		blockExec.tracer = tracer
+	}
+}
+
+func BlockExecutorWithStoreOptions(storeOptions StoreOptions) BlockExecutorOption {
+	return func(blockExec *BlockExecutor) {
+		blockExec.storeOptions = storeOptions
 	}
 }
 
@@ -356,7 +365,9 @@ func (blockExec *BlockExecutor) applyBlock(state State, blockID types.BlockID, b
 	// This needs to be done prior to saving state
 	// for correct crash recovery
 	if blockExec.blockStore != nil {
-		if err := blockExec.blockStore.SaveTxInfo(block, abciResponse.TxResults); err != nil {
+		// Use the storage configuration to determine whether to save TxInfo
+		discardTxInfo := blockExec.storeOptions.DiscardTxInfo
+		if err := blockExec.blockStore.SaveTxInfoWithConfig(block, abciResponse.TxResults, discardTxInfo); err != nil {
 			return state, err
 		}
 	}
