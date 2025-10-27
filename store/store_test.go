@@ -541,6 +541,114 @@ func TestLoadBlockPart(t *testing.T) {
 		"expecting successful retrieval of previously saved block")
 }
 
+func TestSaveTxInfoWithConfig(t *testing.T) {
+	// Create a state and a block store
+	state, blockStore, cleanup := makeStateAndBlockStore()
+	defer cleanup()
+
+	height := int64(1)
+	block, _, err := state.MakeBlock(height, types.MakeData(test.MakeNTxs(height, 1)), new(types.Commit), nil, state.Validators.GetProposer().Address)
+	require.NoError(t, err)
+
+	// Test with discardTxInfo = false (default behavior)
+	txResult := &abci.ExecTxResult{
+		Code:      abci.CodeTypeOK,
+		Codespace: "",
+		GasWanted: 1000,
+		GasUsed:   500,
+		Signers:   []string{"signer1"},
+	}
+
+	err = blockStore.SaveTxInfoWithConfig(block, []*abci.ExecTxResult{txResult}, false)
+	require.NoError(t, err)
+
+	// Verify TxInfo was saved
+	txInfo := blockStore.LoadTxInfo(block.Txs[0].Hash())
+	require.NotNil(t, txInfo)
+	require.Equal(t, height, txInfo.Height)
+	require.Equal(t, abci.CodeTypeOK, txInfo.Code)
+
+	// Test with discardTxInfo = true
+	err = blockStore.SaveTxInfoWithConfig(block, []*abci.ExecTxResult{txResult}, true)
+	require.NoError(t, err)
+
+	// Verify TxInfo was not saved (should still be the old one)
+	txInfo2 := blockStore.LoadTxInfo(block.Txs[0].Hash())
+	require.NotNil(t, txInfo2)
+	require.Equal(t, txInfo.Height, txInfo2.Height) // Should be the same as before
+}
+
+func TestPruneTxInfo(t *testing.T) {
+	config := test.ResetTestRoot("blockchain_reactor_test")
+	defer os.RemoveAll(config.RootDir)
+	stateStore := sm.NewStore(dbm.NewMemDB(), sm.StoreOptions{
+		DiscardABCIResponses: false,
+		DiscardTxInfo:        false,
+	})
+	state, err := stateStore.LoadFromDBOrGenesisFile(config.GenesisFile())
+	require.NoError(t, err)
+	db := dbm.NewMemDB()
+	bs := NewBlockStore(db)
+
+	// Create some blocks with transactions
+	for h := int64(1); h <= 10; h++ {
+		block, partSet, err := state.MakeBlock(h, types.MakeData(test.MakeNTxs(h, 5)), new(types.Commit), nil, state.Validators.GetProposer().Address)
+		require.NoError(t, err)
+		seenCommit := makeTestExtCommit(h, cmttime.Now())
+		bs.SaveBlockWithExtendedCommit(block, partSet, seenCommit)
+
+		// Save TxInfo for each transaction
+		txResults := make([]*abci.ExecTxResult, len(block.Txs))
+		for i := range block.Txs {
+			txResults[i] = &abci.ExecTxResult{
+				Code:      abci.CodeTypeOK,
+				Codespace: "",
+				GasWanted: 1000,
+				GasUsed:   500,
+			}
+		}
+		err = bs.SaveTxInfo(block, txResults)
+		require.NoError(t, err)
+	}
+
+	// Verify TxInfo records exist
+	for h := int64(1); h <= 10; h++ {
+		block := bs.LoadBlock(h)
+		require.NotNil(t, block)
+		for _, tx := range block.Txs {
+			txInfo := bs.LoadTxInfo(tx.Hash())
+			require.NotNil(t, txInfo)
+			require.Equal(t, h, txInfo.Height)
+		}
+	}
+
+	// Prune TxInfo records for heights 1-5
+	err = bs.PruneTxInfo(6)
+	require.NoError(t, err)
+
+	// Verify TxInfo records for heights 1-5 are deleted
+	for h := int64(1); h <= 5; h++ {
+		block := bs.LoadBlock(h)
+		if block != nil {
+			for _, tx := range block.Txs {
+				txInfo := bs.LoadTxInfo(tx.Hash())
+				require.Nil(t, txInfo, "TxInfo should be deleted for height %d", h)
+			}
+		}
+	}
+
+	// Verify TxInfo records for heights 6-10 still exist
+	for h := int64(6); h <= 10; h++ {
+		block := bs.LoadBlock(h)
+		require.NotNil(t, block)
+		for _, tx := range block.Txs {
+			txInfo := bs.LoadTxInfo(tx.Hash())
+			require.NotNil(t, txInfo, "TxInfo should still exist for height %d", h)
+			require.Equal(t, h, txInfo.Height)
+		}
+	}
+}
+
 func TestPruneBlocks(t *testing.T) {
 	config := test.ResetTestRoot("blockchain_reactor_test")
 	defer os.RemoveAll(config.RootDir)
