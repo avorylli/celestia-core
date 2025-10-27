@@ -42,6 +42,8 @@ type BlockStore interface {
 
 	LoadTxInfo(hash []byte) *cmtstore.TxInfo
 	SaveTxInfo(block *types.Block, execTxRes []*abci.ExecTxResult) error
+	SaveTxInfoWithConfig(block *types.Block, execTxRes []*abci.ExecTxResult, discardTxInfo bool) error
+	PruneTxInfo(retainHeight int64) error
 
 	DeleteLatestBlock() error
 
