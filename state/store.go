@@ -96,6 +96,11 @@ type StoreOptions struct {
 	// the store will maintain only the response object from the latest
 	// height.
 	DiscardABCIResponses bool
+
+	// DiscardTxInfo determines whether or not the store
+	// retains TxInfo records. If DiscardTxInfo is enabled,
+	// transaction status queries will not work for historical transactions.
+	DiscardTxInfo bool
 }
 
 var _ Store = (*dbStore)(nil)
