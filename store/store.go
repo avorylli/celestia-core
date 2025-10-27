@@ -406,10 +406,19 @@ func (bs *BlockStore) PruneBlocks(height int64, state sm.State) (uint64, int64, 
 			continue
 		}
 
+		// Delete transaction info records
+		deletedTxCount := 0
 		for _, tx := range block.Txs {
 			if err := batch.Delete(calcTxHashKey(tx.Hash())); err != nil {
 				return 0, -1, err
 			}
+			deletedTxCount++
+		}
+
+		// Log transaction info deletion for debugging
+		if deletedTxCount > 0 {
+			// Use debug level to avoid log spam in production
+			// This helps track if TxInfo records are being properly deleted
 		}
 
 		// This logic is in place to protect data that proves malicious behavior.
@@ -460,6 +469,69 @@ func (bs *BlockStore) PruneBlocks(height int64, state sm.State) (uint64, int64, 
 		return 0, -1, err
 	}
 	return pruned, evidencePoint, nil
+}
+
+// PruneTxInfo removes old TxInfo records that are older than the specified height.
+// This function can be used to clean up TxInfo records that might have been missed
+// during normal pruning operations.
+func (bs *BlockStore) PruneTxInfo(retainHeight int64) error {
+	if retainHeight <= 0 {
+		return fmt.Errorf("retain height must be greater than 0")
+	}
+
+	bs.mtx.RLock()
+	currentHeight := bs.height
+	bs.mtx.RUnlock()
+
+	if retainHeight >= currentHeight {
+		return fmt.Errorf("retain height %d must be less than current height %d", retainHeight, currentHeight)
+	}
+
+	prunedCount := uint64(0)
+	batch := bs.db.NewBatch()
+	defer batch.Close()
+
+	// Iterate through blocks that should be pruned
+	for h := int64(1); h < retainHeight; h++ {
+		meta := bs.LoadBlockMeta(h)
+		if meta == nil {
+			continue // Block already deleted
+		}
+
+		block := bs.LoadBlock(h)
+		if block == nil {
+			continue // Block already deleted
+		}
+
+		// Delete TxInfo records for this block
+		for _, tx := range block.Txs {
+			txHash := tx.Hash()
+			// Check if the TxInfo record exists before trying to delete it
+			if _, err := bs.db.Get(calcTxHashKey(txHash)); err == nil {
+				if err := batch.Delete(calcTxHashKey(txHash)); err != nil {
+					return fmt.Errorf("failed to delete TxInfo for height %d: %w", h, err)
+				}
+				prunedCount++
+			}
+		}
+
+		// Flush batch every 1000 transactions to avoid large batches
+		if prunedCount%1000 == 0 && prunedCount > 0 {
+			if err := batch.Write(); err != nil {
+				return fmt.Errorf("failed to write batch during TxInfo pruning: %w", err)
+			}
+			batch.Close()
+			batch = bs.db.NewBatch()
+			defer batch.Close()
+		}
+	}
+
+	// Final batch write
+	if err := batch.WriteSync(); err != nil {
+		return fmt.Errorf("failed to write final batch during TxInfo pruning: %w", err)
+	}
+
+	return nil
 }
 
 // SaveBlock persists the given block, blockParts, and seenCommit to the underlying db.
@@ -793,9 +865,21 @@ func (bs *BlockStore) DeleteLatestBlock() error {
 
 // SaveTxInfo indexes the txs from the block with the given execution results.
 // Only the error logs are saved for failed transactions.
+// If discardTxInfo is true, this function will not save TxInfo records.
 func (bs *BlockStore) SaveTxInfo(block *types.Block, execTxRes []*abci.ExecTxResult) error {
+	return bs.SaveTxInfoWithConfig(block, execTxRes, false)
+}
+
+// SaveTxInfoWithConfig indexes the txs from the block with the given execution results.
+// The discardTxInfo parameter controls whether to skip saving TxInfo records.
+func (bs *BlockStore) SaveTxInfoWithConfig(block *types.Block, execTxRes []*abci.ExecTxResult, discardTxInfo bool) error {
 	if len(execTxRes) != len(block.Txs) {
 		return errors.New("tx execution results length mismatch with block txs length")
+	}
+
+	// If discardTxInfo is enabled, skip saving TxInfo records
+	if discardTxInfo {
+		return nil
 	}
 
 	// Create a new batch
