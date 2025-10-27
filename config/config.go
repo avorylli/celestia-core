@@ -1288,6 +1288,11 @@ type StorageConfig struct {
 	// required for `/block_results` RPC queries, and to reindex events in the
 	// command-line tool.
 	DiscardABCIResponses bool `mapstructure:"discard_abci_responses"`
+
+	// Set to true to discard TxInfo records to save disk space. TxInfo records are
+	// required for `/tx_status` RPC queries and transaction status tracking.
+	// When enabled, transaction status queries will not work for historical transactions.
+	DiscardTxInfo bool `mapstructure:"discard_tx_info"`
 }
 
 // DefaultStorageConfig returns the default configuration options relating to
@@ -1295,6 +1300,7 @@ type StorageConfig struct {
 func DefaultStorageConfig() *StorageConfig {
 	return &StorageConfig{
 		DiscardABCIResponses: false,
+		DiscardTxInfo:        false,
 	}
 }
 
@@ -1303,6 +1309,7 @@ func DefaultStorageConfig() *StorageConfig {
 func TestStorageConfig() *StorageConfig {
 	return &StorageConfig{
 		DiscardABCIResponses: false,
+		DiscardTxInfo:        false,
 	}
 }
 
